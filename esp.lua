@@ -3,6 +3,8 @@ local character = player.Character or player.CharacterAdded:Wait()
 local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
 
 local runService = game:GetService("RunService")
+local ContextActionService = game:GetService("ContextActionService")
+
 local teleporting = false -- чтобы стартовать/остановить цикл
 
 -- Создаем ScreenGui
@@ -42,7 +44,7 @@ local function findAccessibleChest(chests)
         for _, part in pairs(chest:GetChildren()) do
             if part:IsA("BasePart") then
                 local y = part.Position.Y
-                if y >= 115 and y <= 180 then
+                if y >= 114 and y <= 180 then
                     accessible = true
                     break
                 end
@@ -64,9 +66,8 @@ local function teleportToRandomAccessibleChest()
     for _, part in pairs(randomChest:GetChildren()) do
         if part:IsA("BasePart") then
             local y = part.Position.Y
-            -- Проверка лимита по высоте
-            if y > 180 or y < 115 then
-                -- Если сундук за пределами лимита, ищем другой
+            if y > 180 or y < 114 then
+                -- Не телепортируемся на сундук вне лимита
                 return
             end
             humanoidRootPart.CFrame = CFrame.new(part.Position.X, y + 3, part.Position.Z)
@@ -75,32 +76,39 @@ local function teleportToRandomAccessibleChest()
     end
 end
 
-local function pressProximityPromptNearby()
+local function activateNearbyProximityPrompts()
     local radius = 15
     for _, model in pairs(workspace:GetDescendants()) do
-        if model:IsA("Model") and model:FindFirstChildOfClass("ProximityPrompt") then
+        if model:IsA("Model") then
             local prompt = model:FindFirstChildOfClass("ProximityPrompt")
             if prompt and prompt.Enabled then
-                local modelPos = model:GetModelCFrame().Position
+                local modelPos = model:GetModelCFrame() and model:GetModelCFrame().Position or model:GetBoundingBox().Position
+                if not modelPos then
+                    -- Если модель не имеет CFrame, пропускаем
+                    continue
+                end
                 local distance = (humanoidRootPart.Position - modelPos).Magnitude
                 if distance <= radius then
-                    -- Автоматически активируем Prompt
-                    prompt:InputBegan(
-                        {UserInputType = Enum.UserInputType.MouseButton1},
-                        true
-                    )
-                    -- Или вызываем напрямую
-                    prompt:InputBegan(
-                        {UserInputType = Enum.UserInputType.MouseButton1},
-                        true
-                    )
+                    -- Активируем Prompt программно через ContextActionService
+                    -- Создаем уникальное имя для действия
+                    local actionName = "ActivatePrompt_" .. model:GetDebugId()
+                    -- Объявляем функцию, которая активирует Prompt
+                    local function activatePrompt(actionName, inputState, inputObject)
+                        if inputState == Enum.UserInputState.Begin then
+                            prompt:InputBegan({UserInputType = Enum.UserInputType.MouseButton1}, true)
+                        end
+                    end
+                    -- Биндим действие
+                    ContextActionService:BindAction(actionName, activatePrompt, false, Enum.UserInputType.MouseButton1)
+                    -- Немедленно вызываем активатор
+                    activatePrompt(actionName, Enum.UserInputState.Begin, nil)
+                    -- Можно разгруппировать после вызова, чтобы не засорять
+                    -- ContextActionService:UnbindAction(actionName)
                 end
             end
         end
     end
 end
-
-local teleportCoroutine = nil
 
 local function startTeleportCycle()
     if teleporting then return end
@@ -108,11 +116,11 @@ local function startTeleportCycle()
     startButton.Visible = false
     stopButton.Visible = true
 
-    teleportCoroutine = coroutine.create(function()
+    local function cycle()
         while teleporting do
-            -- Автоматическое взаимодействие с Prompt
-            pressProximityPromptNearby()
-            -- Телепортировать только если высота в лимите
+            -- Автоматически активируем Prompt
+            activateNearbyProximityPrompts()
+            -- Телепортируемся, если лимит по высоте позволяет
             local chests = getAllChests()
             local accessibleChests = findAccessibleChest(chests)
             if #accessibleChests > 0 then
@@ -128,14 +136,12 @@ local function startTeleportCycle()
                         end
                     end
                 end
-                if not validPartFound then
-                    -- Все сундуки вне лимита
-                end
             end
             wait(1)
         end
-    end)
-    coroutine.resume(teleportCoroutine)
+    end
+
+    coroutine.wrap(cycle)()
 end
 
 local function stopTeleportCycle()
